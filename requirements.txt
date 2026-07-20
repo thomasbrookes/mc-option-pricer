@@ -3,4 +3,3 @@ pandas
 matplotlib
 scipy
 yfinance
-jupyter
