@@ -24,3 +24,40 @@ def sim_paths(S0, mu, sigma, T, N, n_paths):
     prices = S0 * np.exp(log_paths) # Convert log prices back to actual prices
 
     return prices
+
+def sim_correlated_paths(S0s, mu, sigma, corr_matrix, T, N, n_paths):
+    """
+    Sim correlated GBM paths for multiple assets.
+
+    Parameters:
+        S0s: current price of each asset
+        mu: growth rate of each asset
+        sigma: volatility of each asset
+        corr_matrix: correlation between each pair of assets
+        T: time horizon in years
+        N: steps to sim within that horizon
+        n_paths: how many paths to sim
+
+    Returns:
+        prices: shape (n_paths, N+1, n_assets)
+    """
+    n_assets = len(S0s)
+    dt = T / N
+
+    S0s = np.array(S0s)
+    mu = np.array(mu)
+    sigma = np.array(sigma)
+
+    L = np.linalg.cholesky(corr_matrix) # cholesky factor - turns independent shocks into correlated ones
+
+    Z = np.random.normal(size=(n_paths, N, n_assets)) # independent shock per path, step, and asset
+    Z_corr = Z @ L.T # correlate the shocks across assets at each step
+
+    increments = (mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z_corr # GBM update, per asset
+
+    log_paths = np.cumsum(increments, axis=1) # cumulative log return over time, per asset
+    log_paths = np.concatenate([np.zeros((n_paths, 1, n_assets)), log_paths], axis=1) # add t=0 row
+
+    prices = S0s * np.exp(log_paths) # convert back to price, per asset
+
+    return prices
