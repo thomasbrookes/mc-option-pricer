@@ -16,6 +16,7 @@ def historical_var(S0, mu, sigma, T, N, n_paths, confidence=0.95):
 
     Returns:
         var: Loss we don't expect to exceed, e.g. 95% of time at 0.95 confidence
+        es: Average loss in the cases beyond the VaR cutoff
     """
     paths = sim_paths(S0, mu, sigma, T, N, n_paths) # sim many future price paths
 
@@ -25,8 +26,9 @@ def historical_var(S0, mu, sigma, T, N, n_paths, confidence=0.95):
     losses = -pnl # flip sign so positive = loss
 
     var = np.percentile(losses, confidence * 100) # loss at the cutoff percentile
+    es = losses[losses >= var].mean() # average loss in the tail beyond the cutoff
 
-    return var
+    return var, es
 
 def portfolio_var(S0s, shares, mu, sigma, corr_matrix, T, N, n_paths, confidence=0.95):
     """
@@ -45,6 +47,7 @@ def portfolio_var(S0s, shares, mu, sigma, corr_matrix, T, N, n_paths, confidence
 
     Returns:
         var: loss we don't expect the portfolio to exceed, e.g. 95% of time at 0.95 confidence
+        es: average loss in the cases beyond the VaR cutoff
     """
     paths = sim_correlated_paths(S0s, mu, sigma, corr_matrix, T, N, n_paths) # shape (n_paths, N+1, n_assets)
 
@@ -57,5 +60,6 @@ def portfolio_var(S0s, shares, mu, sigma, corr_matrix, T, N, n_paths, confidence
     losses = -pnl # flip sign so positive = loss
 
     var = np.percentile(losses, confidence * 100) # loss at the cutoff percentile
+    es = losses[losses >= var].mean() # average loss in the tail beyond the cutoff
 
-    return var
+    return var, es
