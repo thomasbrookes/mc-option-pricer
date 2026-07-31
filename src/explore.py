@@ -1,10 +1,12 @@
 # %%
-from var import historical_var
+from greeks import delta, vega, rho, theta
 
 # %%
-# Single stock VaR and Expected Shortfall
-var_95, es_95 = historical_var(S0=100, mu=0.08, sigma=0.2, T=1, N=252, n_paths=10000, confidence=0.95)
-print(f"95% 1-year VaR: {var_95:.2f}")
-print(f"95% 1-year Expected Shortfall: {es_95:.2f}")
-print(f"We're 95% confident we won't lose more than {var_95:.2f}, but if we do, we'd expect to lose {es_95:.2f} on average")
+# Greeks for a European call, via bump-and-revalue
+S0, K, r, sigma, T, N, n_paths = 100, 100, 0.05, 0.2, 1, 252, 10000
+
+print(f"Delta: {delta(S0, K, r, sigma, T, N, n_paths):.4f}")
+print(f"Vega: {vega(S0, K, r, sigma, T, N, n_paths):.4f}")
+print(f"Rho: {rho(S0, K, r, sigma, T, N, n_paths):.4f}")
+print(f"Theta: {theta(S0, K, r, sigma, T, N, n_paths):.4f}")
 # %%
