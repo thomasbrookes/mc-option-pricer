@@ -1,24 +1,39 @@
 # %%
-from greeks import delta, vega, rho, theta
-from option_pricer import bs_delta, bs_vega, bs_rho, bs_theta
+import numpy as np
+from market_data import get_stock_params, get_corr_matrix
+from var import historical_var, portfolio_var
 
 # %%
-# Greeks for a European call - MC bump-and-revalue vs closed-form Black-Scholes
-S0, K, r, sigma, T, N, n_paths = 100, 100, 0.05, 0.2, 1, 252, 10000
+# Get real S0, mu, sigma for a single stock and feed straight into historical_var - unchanged
+S0, mu, sigma = get_stock_params("AAPL", start="2023-01-01", end="2026-01-01")
+print(f"AAPL - S0: {S0:.2f}, mu: {mu:.4f}, sigma: {sigma:.4f}")
 
-mc_vals = {
-    "Delta": delta(S0, K, r, sigma, T, N, n_paths),
-    "Vega": vega(S0, K, r, sigma, T, N, n_paths),
-    "Rho": rho(S0, K, r, sigma, T, N, n_paths),
-    "Theta": theta(S0, K, r, sigma, T, N, n_paths),
-}
-bs_vals = {
-    "Delta": bs_delta(S0, K, r, sigma, T),
-    "Vega": bs_vega(S0, K, r, sigma, T),
-    "Rho": bs_rho(S0, K, r, sigma, T),
-    "Theta": bs_theta(S0, K, r, sigma, T, N),
-}
+expected_price = S0 * np.exp(mu * 1) # theoretical expected price in 1 year, given the drift mu
+print(f"Expected price in 1 year: {expected_price:.2f}")
 
-for name in mc_vals:
-    print(f"{name}: MC = {mc_vals[name]:.4f}, Black-Scholes = {bs_vals[name]:.4f}")
+var_95, es_95 = historical_var(S0=S0, mu=mu, sigma=sigma, T=1, N=252, n_paths=10000, confidence=0.95)
+print(f"95% 1-year VaR: {var_95:.2f}")
+print(f"95% 1-year Expected Shortfall: {es_95:.2f}")
+
+# %%
+# Real S0/mu/sigma/correlation across a few stocks, fed into portfolio_var - also unchanged
+tickers = ["AAPL", "MSFT", "XOM"]
+start, end = "2023-01-01", "2026-01-01"
+
+S0s, mus, sigmas = [], [], []
+for ticker in tickers:
+    s0, m, sig = get_stock_params(ticker, start=start, end=end)
+    S0s.append(s0)
+    mus.append(m)
+    sigmas.append(sig)
+
+corr_matrix = get_corr_matrix(tickers, start=start, end=end).values # correlation between the 3 stocks
+shares = [1, 1, 1] # 1 share of each, just to demo
+
+expected_value = sum(sh * s0 * np.exp(m * 1) for sh, s0, m in zip(shares, S0s, mus)) # expected value of each holding, summed - correlation doesn't affect this, only spread does
+print(f"Expected portfolio value in 1 year: {expected_value:.2f}")
+
+port_var_95, port_es_95 = portfolio_var(S0s, shares, mus, sigmas, corr_matrix, T=1, N=252, n_paths=10000, confidence=0.95)
+print(f"95% 1-year portfolio VaR: {port_var_95:.2f}")
+print(f"95% 1-year portfolio Expected Shortfall: {port_es_95:.2f}")
 # %%
