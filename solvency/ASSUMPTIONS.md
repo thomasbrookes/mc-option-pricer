@@ -35,3 +35,26 @@ A simplified UK annuity writer. It has promised fixed yearly payments to pension
 ## Parameters
 
 Added as each component is built.
+
+### Mortality (Gompertz-Makeham)
+
+Chance of dying at age x is driven by `A + B × c^x`: a flat background part plus a part that grows exponentially with age.
+
+| Parameter | Default | What it means | Source / rationale |
+|---|---|---|---|
+| `A` | 0.00022 | Background death rate that doesn't depend on age (accidents etc.) | Standard Ultimate Survival Model, Dickson, Hardy & Waters, *Actuarial Mathematics for Life Contingent Risks* |
+| `B` | 0.0000027 | Size of the age-related part | Same source |
+| `c` | 1.124 | Death rates rise about 12.4% per year of age | Same source |
+| `max_age` | 120 | Nobody lives past this | Common actuarial convention |
+
+Gives a life expectancy at 65 of about 22.7 years. That's a bit above the ONS general population (roughly 18.5 for men and 21 for women), which is realistic: people who buy annuities tend to be healthier and wealthier than average.
+
+### Liabilities (the annuity block)
+
+| Parameter | Default | What it means | Source / rationale |
+|---|---|---|---|
+| `n_annuitants` | 10,000 | Number of pensioners | Round number giving a ~£1bn book, a small but realistic UK annuity writer |
+| `age_min`, `age_max` | 60, 90 | Pensioners are spread evenly across these ages | Covers the typical range of annuities in payment |
+| `annual_payment` | £10,000 | Fixed yearly payment per pensioner, paid at year end | Roughly a typical UK annuity income |
+
+Resulting book: about £97m paid in year 1, worth about £1bn at a 4% interest rate, with a **duration of about 9 years**. That means the promises behave roughly like a 9-year bond, which is why the insurer needs long bonds to match them.
