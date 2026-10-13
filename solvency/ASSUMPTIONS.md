@@ -26,7 +26,7 @@ A simplified UK annuity writer. It has promised fixed yearly payments to pension
 | Same rate parameters for simulating and pricing | Vasicek is simulated with real-world parameters and the same parameters are used in the bond price formula (zero market price of rate risk) | Avoids a second set of parameters that would be hard to justify |
 | Credit spreads floored at zero | A mean-reverting process could go negative; we stop it at 0 | Negative spreads make no economic sense |
 | Reinsurance as a quota share | The reinsurance asset = a fixed fraction of the liability value | Simple; it is only written down in the AI crash stress (reinsurer default) |
-| "Risk switched off" means no randomness | A switched-off driver follows its expected path | Lets us compute standalone SCRs. With everything off, SCR is close to but not exactly zero, because equities and corporate bonds are expected to earn slightly more than gilts |
+| No randomness check | With every volatility set to zero, the SCR should come out close to zero | Not exactly zero, because equities and corporate bonds are expected to earn slightly more than gilts |
 | Discounting back | Own funds at t=1 are brought back to today using today's one-year gilt price | Simple and consistent |
 | AI crash is instantaneous | Shocks are applied to today's balance sheet all at once | Standard way to present a stress test |
 | SCR held fixed after the crash | Post-crash solvency ratio = post-crash own funds ÷ pre-crash SCR | In reality the SCR would be recalculated; holding it fixed gives a cleaner before/after comparison |
@@ -58,3 +58,34 @@ Gives a life expectancy at 65 of about 22.7 years. That's a bit above the ONS ge
 | `annual_payment` | £10,000 | Fixed yearly payment per pensioner, paid at year end | Roughly a typical UK annuity income |
 
 Resulting book: about £97m paid in year 1, worth about £1bn at a 4% interest rate, with a **duration of about 9 years**. That means the promises behave roughly like a 9-year bond, which is why the insurer needs long bonds to match them.
+
+### Interest rates (Vasicek)
+
+The short-term interest rate follows `dr = a(b − r)dt + σ dW`: each month it gets pulled part of the way back towards a long-run level `b`, plus a random shock of size `σ`. A closed-form formula then turns the short rate into the price of a bond of any maturity, which gives the whole yield curve.
+
+| Parameter | Default | What it means | Source / rationale |
+|---|---|---|---|
+| `r0` | 3.75% | Short rate today | Roughly in line with recent Bank of England base rate. **Check the current figure before presenting** |
+| `a` | 0.15 | Speed of pull back to `b`: about 15% of the gap closes each year | Chosen so long yields move about half as much as the short rate, which is realistic |
+| `b` | 5% | Long-run level the short rate is pulled towards | Gives long gilt yields of about 4.5%, in the range UK gilts have traded at in recent years |
+| `sigma_r` | 1% | Size of yearly random shocks to the short rate | Gives a 1-in-200 fall in the 10-year yield of about 1.2 points, similar to the Solvency II standard formula's interest-rate-down stress |
+| `n_paths` | 10,000 | Number of simulated one-year scenarios | Brief requirement; enough for a stable 1-in-200 percentile |
+| `seed` | 42 | Random number seed | Makes every run give identical results |
+
+Resulting yield curve today: 1-year 3.84%, 10-year 4.29%, 30-year 4.58%. On this curve the liabilities are worth **£965m** with a duration of **8.6 years**.
+
+**Rate simplifications:**
+- **Vasicek allows negative rates.** That's realistic (UK and European rates were negative or near zero in the 2010s), but with these settings it essentially never happens within one year: the 1-in-200 low short rate is about 1.6%.
+- **Monthly steps, simple update rule.** Each month the rate moves by `a(b − r) × 1/12 + σ × shock`. The checks confirm the simulated mean and spread after one year match the exact Vasicek values.
+- **One factor.** Every yield is driven by the single short rate, so the curve can shift and tilt but not twist in more complicated ways.
+
+**How accurate is Vasicek?** Good enough for our purpose, but not production grade.
+- *Gets right:* rates move randomly but get pulled back to a normal level. Most real yield-curve movement is the whole curve shifting up or down together, which is what Vasicek captures, and what hurts annuity writers. Its 1-in-200 shock is close to the standard formula's.
+- *Falls short:*
+  - One factor, so the curve can't twist (short rates up, long rates down).
+  - Bell-curve shocks understate extreme moves, e.g. the 2022 mini-budget gilt crisis.
+  - Volatility is constant.
+  - Its smooth curve doesn't exactly match today's real gilt curve.
+- *What insurers actually use:* economic scenario generators with multi-factor models (e.g. multi-factor Hull-White, which is Vasicek adjusted to fit today's curve exactly).
+- *Q&A line:* "Vasicek captures the main risk, rates moving as a whole, with a standard-formula-sized shock. A production model would add more factors and fatter tails."
+- *Bank Rate vs gilt yields:* Bank Rate moves in 0.25-point steps, but we value with gilt yields, which move continuously because they price in expectations of all future rate decisions.
