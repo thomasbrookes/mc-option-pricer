@@ -13,7 +13,8 @@ import matplotlib.pyplot as plt
 from liabilities import survival_prob, project_cash_flows, flat_discount_factors, value_liabilities, liability_duration
 from rates import simulate_short_rate, zcb_price, zero_yield, revalue_zcb
 from credit import simulate_spread, corporate_bond_price, revalue_corporate, matching_adjustment
-from equities import simulate_equity_growth, revalue_equities
+from equities import simulate_equity_growth, simulate_all_drivers, revalue_equities
+from correlation import check_corr_matrix, print_corr_matrix
 
 # %%
 # Parameters - defaults and sources are in ASSUMPTIONS.md
@@ -54,6 +55,17 @@ mu_eq_other = 0.075 # non-tech expected return - risk-free plus 3.5% equity risk
 sigma_eq_other = 0.16 # non-tech volatility - SPXT (S&P 500 ex-tech) 2016-2025 was 16.3%
 rho_equity = 0.74 # correlation between tech and non-tech - XLK vs SPXT daily returns 2016-2025
 tech_weight = 0.38 # share of equities in tech - S&P 500 tech sector weight, end June 2026
+
+# Correlation between all five drivers - rows and columns in DRIVERS order:
+# tech equity, non-tech equity, short rate, tech spread, other spread
+# Positive equity-rate: shares down, rates down. Negative equity-spread: shares down, spreads wider
+corr_matrix = [
+    [ 1.00,  0.74,  0.50, -0.75, -0.60], # tech equity - 0.74 from Yahoo data, 0.5 and -0.75 from the standard formula
+    [ 0.74,  1.00,  0.50, -0.60, -0.75], # non-tech equity
+    [ 0.50,  0.50,  1.00, -0.50, -0.50], # short rate - rates fall when spreads widen, standard formula 0.5
+    [-0.75, -0.60, -0.50,  1.00,  0.80], # tech spread - each bucket's equity links most to its own spread
+    [-0.60, -0.75, -0.50,  0.80,  1.00], # other spread - spreads widen together
+]
 
 # Simulation
 n_paths = 10_000 # number of simulated scenarios
@@ -292,3 +304,37 @@ for name, equity_share in [("Modern (5% equities)", 0.05), ("1999-style (40% equ
 print("All equity checks passed")
 
 # %%
+
+# %%
+# Correlation 1: the matrix is valid
+corr = check_corr_matrix(corr_matrix)
+print_corr_matrix(corr)
+print(f"Smallest eigenvalue {np.linalg.eigvalsh(corr).min():.3f} - above zero, so Cholesky works")
+
+# %%
+# Correlation 2: one engine call gives correlated shares and the shocks for rates and spreads
+np.random.seed(seed)
+growth, dW = simulate_all_drivers(mu_eq_tech, sigma_eq_tech, mu_eq_other, sigma_eq_other, corr, T=1, N=12, n_paths=n_paths)
+assert abs(dW.std() / np.sqrt(1 / 12) - 1) < 0.02 # monthly shocks have the right size
+
+r1 = simulate_short_rate(r0, a, b, sigma_r, T=1, N=12, n_paths=n_paths, dW=dW[:, :, 0])[:, -1]
+s1_tech = simulate_spread(s0_tech, kappa_tech, theta_tech, sigma_tech, T=1, N=12, n_paths=n_paths, dW=dW[:, :, 1])[:, -1]
+s1_other = simulate_spread(s0_other, kappa_other, theta_other, sigma_other, T=1, N=12, n_paths=n_paths, dW=dW[:, :, 2])[:, -1]
+
+# what each driver did over the year - share returns, and changes in rate and spreads
+outcomes = np.column_stack([np.log(growth[:, 0]), np.log(growth[:, 1]), r1 - r0, s1_tech - s0_tech, s1_other - s0_other])
+corr_sim = np.corrcoef(outcomes.T)
+print("Correlation of one-year outcomes in the simulation:")
+print_corr_matrix(corr_sim)
+assert np.abs(corr_sim - corr).max() < 0.05 # close to the input - small gaps from mean reversion and the zero floor
+
+# %%
+# Correlation 3: bad things now happen together
+# In the worst 1% of years for tech shares, what did rates and spreads do?
+worst = outcomes[:, 0] <= np.percentile(outcomes[:, 0], 1)
+print(f"Worst 1% of tech years: tech shares {np.expm1(outcomes[worst, 0].mean()):.0%}, non-tech {np.expm1(outcomes[worst, 1].mean()):.0%}, "
+      f"short rate {outcomes[worst, 2].mean() * 1e4:+.0f} bps, tech spread {outcomes[worst, 3].mean() * 1e4:+.0f} bps, "
+      f"other spread {outcomes[worst, 4].mean() * 1e4:+.0f} bps")
+assert outcomes[worst, 2].mean() < 0 # rates fall in an equity crash
+assert outcomes[worst, 3].mean() > 0 and outcomes[worst, 4].mean() > 0 # spreads widen in an equity crash
+print("All correlation checks passed")

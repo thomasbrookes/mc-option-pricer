@@ -34,6 +34,38 @@ def simulate_equity_growth(mu_tech, sigma_tech, mu_other, sigma_other, rho, T, N
     return paths[:, -1, :] # only the value at the end of the horizon matters for the SCR
 
 
+def simulate_all_drivers(mu_tech, sigma_tech, mu_other, sigma_other, corr_matrix, T, N, n_paths):
+    """
+    One call to the existing GBM engine that moves all five risk drivers together.
+
+    Columns 0-1 are the real tech and non-tech share prices. Columns 2-4 (rate, tech spread,
+    other spread) are given S0=1, mu=0.5, sigma=1 - the drift (mu - 0.5*sigma^2) is then zero,
+    so log price is just a correlated random walk, and its monthly changes are the shocks dW
+    that drive the Vasicek rate and the two spreads.
+
+    Parameters:
+        mu_tech, sigma_tech, mu_other, sigma_other: share growth rates and volatilities
+        corr_matrix: correlation between all five drivers, shape (5, 5) in correlation.DRIVERS order
+        T: time horizon in years
+        N: steps to sim within that horizon
+        n_paths: how many paths to sim
+
+    Returns:
+        growth: value at T of £1 in tech and non-tech shares, shape (n_paths, 2)
+        dW: correlated shocks for rate, tech spread, other spread, shape (n_paths, N, 3)
+    """
+    S0s = [1.0, 1.0, 1.0, 1.0, 1.0]
+    mus = [mu_tech, mu_other, 0.5, 0.5, 0.5] # 0.5 cancels the -0.5*sigma^2 term for the last three
+    sigmas = [sigma_tech, sigma_other, 1.0, 1.0, 1.0] # unit volatility = plain random walk
+
+    paths = sim_correlated_paths(S0s, mus, sigmas, corr_matrix, T, N, n_paths) # shape (n_paths, N+1, 5)
+
+    growth = paths[:, -1, :2] # share prices at the end of the horizon
+    dW = np.diff(np.log(paths[:, :, 2:]), axis=1) # monthly change in each random walk = the shock that month
+
+    return growth, dW
+
+
 def revalue_equities(equity_value_0, tech_weight, growth):
     """
     Value of the insurer's equity holding after the simulated growth.

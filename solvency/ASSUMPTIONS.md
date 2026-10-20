@@ -134,3 +134,32 @@ Resulting 1-in-200 one-year falls: **tech −44%, non-tech −29%**. Example: an
 - **GBM has thin tails.** The non-tech 1-in-200 fall of 29% is milder than the Solvency II standard formula's 39% equity stress, because GBM's bell-curve returns understate crashes. This makes our equity SCR, if anything, an underestimate, which strengthens the conclusion that equities are risky.
 - **Constant volatility.** Tech volatility was 45% during the dot-com crash (XLK, March 2000 to October 2002), almost double its recent level. A single volatility can't capture that, which is one reason the AI crash is run as a separate deterministic stress.
 - **No dividends.** Total return is folded into `mu`.
+
+### Correlation between all five risks
+
+All five risk drivers move together through one correlation matrix, applied with Cholesky inside the existing `sim_correlated_paths` engine. The trick: the rate and the two spreads are fed into the engine as "assets" with zero drift and unit volatility, so their log prices are just correlated random walks. Their monthly changes become the shocks that drive Vasicek and the spread processes.
+
+| | Tech equity | Non-tech equity | Short rate | Tech spread | Other spread |
+|---|---|---|---|---|---|
+| **Tech equity** | 1 | 0.74 | 0.50 | −0.75 | −0.60 |
+| **Non-tech equity** | 0.74 | 1 | 0.50 | −0.60 | −0.75 |
+| **Short rate** | 0.50 | 0.50 | 1 | −0.50 | −0.50 |
+| **Tech spread** | −0.75 | −0.60 | −0.50 | 1 | 0.80 |
+| **Other spread** | −0.60 | −0.75 | −0.50 | 0.80 | 1 |
+
+**Reading the signs:**
+- **Positive equity–rate (0.50):** when shares fall, rates tend to fall too, as central banks cut and investors flee to gilts. That's bad for an annuity writer, since both its equities and its rate position lose at once.
+- **Negative equity–spread:** when shares fall, spreads widen.
+- **Negative rate–spread:** when rates fall, spreads tend to widen (a flight to safety).
+
+**Sources:**
+- **Equity–equity 0.74:** Yahoo Finance, XLK vs SPXT daily returns, 2016–2025.
+- **Equity–rate 0.50, rate–spread 0.50 and equity–spread 0.75 (in size):** the Solvency II standard formula's market-risk correlations, applying when the insurer is exposed to falling rates. Each equity bucket links most strongly (0.75) to its own sector's spread and less (0.60) to the other.
+- **Tech spread–other spread 0.80:** judgement. Credit markets widen together, but sector shocks differ.
+
+**Effect:** in the worst 1% of years for tech shares, the simulation also has non-tech shares −24%, the short rate −118 bps, tech spreads +206 bps and other spreads +91 bps. Bad things happen together, as in a real crisis.
+
+**Simplifications:**
+- **One fixed matrix.** Real correlations rise in a crisis. Crisis correlations are out of scope; the deterministic AI crash stress hits everything at once instead.
+- **Standard formula correlations are between capital charges, not between the risk drivers themselves.** Using them as driver correlations is a common simplification.
+- **Bell-curve dependence** (a Gaussian copula). Real markets show stronger links in the extreme tail than this allows.
