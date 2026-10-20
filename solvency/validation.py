@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from liabilities import survival_prob, project_cash_flows, flat_discount_factors, value_liabilities, liability_duration
 from rates import simulate_short_rate, zcb_price, zero_yield, revalue_zcb
 from credit import simulate_spread, corporate_bond_price, revalue_corporate, matching_adjustment
+from equities import simulate_equity_growth, revalue_equities
 
 # %%
 # Parameters - defaults and sources are in ASSUMPTIONS.md
@@ -45,6 +46,14 @@ theta_other = 0.013 # long-run other spread
 kappa_other = 0.5 # speed other spreads are pulled back
 sigma_other = 0.0065 # size of other spread shocks
 ma_fraction = 0.5 # share of the bond spread allowed as matching adjustment
+
+# Equities - GBM via the existing engine, volatilities and correlation from Yahoo Finance 2016-2025
+mu_eq_tech = 0.085 # tech expected return - risk-free plus a 4.5% equity risk premium, not a historical average
+sigma_eq_tech = 0.24 # tech volatility - XLK (US tech sector) 2016-2025 was 24.3%
+mu_eq_other = 0.075 # non-tech expected return - risk-free plus 3.5% equity risk premium
+sigma_eq_other = 0.16 # non-tech volatility - SPXT (S&P 500 ex-tech) 2016-2025 was 16.3%
+rho_equity = 0.74 # correlation between tech and non-tech - XLK vs SPXT daily returns 2016-2025
+tech_weight = 0.38 # share of equities in tech - S&P 500 tech sector weight, end June 2026
 
 # Simulation
 n_paths = 10_000 # number of simulated scenarios
@@ -252,5 +261,34 @@ for name, v in [("Tech", tech_1), ("Other", other_1)]:
     print(f"{name} 10-year corporate: £100 today, after 1 year mean £{v.mean():.1f}, 1-in-200 low £{np.percentile(v, 0.5):.1f}")
 assert np.percentile(tech_1, 0.5) < np.percentile(other_1, 0.5) # tech debt has the worse tail
 print("All credit checks passed")
+
+# %%
+
+# %%
+# Equities 1: the engine gives the right average growth, volatility and correlation
+np.random.seed(seed)
+growth = simulate_equity_growth(mu_eq_tech, sigma_eq_tech, mu_eq_other, sigma_eq_other, rho_equity, T=1, N=12, n_paths=n_paths)
+log_ret = np.log(growth)
+
+for i, (name, mu_, sg) in enumerate([("Tech", mu_eq_tech, sigma_eq_tech), ("Non-tech", mu_eq_other, sigma_eq_other)]):
+    print(f"{name}: mean growth {growth[:, i].mean():.3f} (exact {np.exp(mu_):.3f}), volatility {log_ret[:, i].std():.3f} (input {sg}), "
+          f"1-in-200 fall {1 - np.percentile(growth[:, i], 0.5):.0%}")
+    assert abs(growth[:, i].mean() / np.exp(mu_) - 1) < 0.01
+    assert abs(log_ret[:, i].std() / sg - 1) < 0.03
+
+corr_sim = np.corrcoef(log_ret.T)[0, 1]
+print(f"Correlation: {corr_sim:.2f} (input {rho_equity})")
+assert abs(corr_sim - rho_equity) < 0.02
+assert np.percentile(growth[:, 0], 0.5) < np.percentile(growth[:, 1], 0.5) # tech has the worse tail
+
+# %%
+# Equities 2: what a 1-in-200 equity year costs a modern vs a 1999-style insurer
+# Same £1bn of assets, 5% vs 40% in equities, 38% of the equities in tech
+for name, equity_share in [("Modern (5% equities)", 0.05), ("1999-style (40% equities)", 0.40)]:
+    equity_0 = 1e9 * equity_share
+    equity_1 = revalue_equities(equity_0, tech_weight, growth)
+    loss = equity_0 - np.percentile(equity_1, 0.5)
+    print(f"{name}: £{equity_0 / 1e6:,.0f}m in equities, 1-in-200 loss £{loss / 1e6:,.0f}m")
+print("All equity checks passed")
 
 # %%

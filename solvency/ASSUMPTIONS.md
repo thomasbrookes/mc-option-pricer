@@ -113,3 +113,24 @@ A corporate bond yields the gilt rate plus a **credit spread**, the extra intere
 - **One flat spread per bucket**, the same for every maturity. Real spread curves vary by maturity.
 - **Bell-curve shocks, floored at zero.** Real spreads jump up sharply in crises and rarely fall far, so their moves are lopsided. Ours are symmetric, and a small share of paths (about 1–3%) get floored at zero spread. That only affects the benign side, not the 1-in-200 tail we care about.
 - **MA weighting by value, not by duration.** A real MA is calculated from the matched asset cash flows.
+
+### Equities
+
+Two buckets, tech/AI and non-tech, each following Geometric Brownian Motion and linked by a correlation. Simulated with `sim_correlated_paths` from the existing option-pricer engine (`src/gbm.py`), unchanged. The model starts both at £1 and reads off what each has grown to after one year.
+
+| Parameter | Default | What it means | Source / rationale |
+|---|---|---|---|
+| `mu_eq_tech` | 8.5% | Expected yearly return on tech shares | Risk-free rate (~4%) + 4.5% equity risk premium. **Not** a historical average: those are too noisy (see the README) |
+| `mu_eq_other` | 7.5% | Expected yearly return on non-tech shares | Risk-free rate (~4%) + 3.5% equity risk premium |
+| `sigma_eq_tech` | 24% | Volatility of tech shares | Yahoo Finance: XLK (US tech sector fund), daily returns 2016–2025: 24.3% |
+| `sigma_eq_other` | 16% | Volatility of non-tech shares | Yahoo Finance: SPXT (S&P 500 excluding tech), 2016–2025: 16.3% |
+| `rho_equity` | 0.74 | Correlation between tech and non-tech returns | Yahoo Finance: XLK vs SPXT daily returns, 2016–2025 |
+| `tech_weight` | 38% | Share of the insurer's equities in tech | S&P 500 Information Technology sector weight, end June 2026 (from the brief) |
+
+Resulting 1-in-200 one-year falls: **tech −44%, non-tech −29%**. Example: an insurer with £1bn of assets loses £16m in a 1-in-200 equity year with 5% in equities, or £131m with 40% in equities.
+
+**Equity simplifications:**
+- **US data as a proxy.** A UK insurer holds UK and global shares, but the tech sector is overwhelmingly US-listed, and these are the cleanest long series for tech vs non-tech.
+- **GBM has thin tails.** The non-tech 1-in-200 fall of 29% is milder than the Solvency II standard formula's 39% equity stress, because GBM's bell-curve returns understate crashes. This makes our equity SCR, if anything, an underestimate, which strengthens the conclusion that equities are risky.
+- **Constant volatility.** Tech volatility was 45% during the dot-com crash (XLK, March 2000 to October 2002), almost double its recent level. A single volatility can't capture that, which is one reason the AI crash is run as a separate deterministic stress.
+- **No dividends.** Total return is folded into `mu`.
