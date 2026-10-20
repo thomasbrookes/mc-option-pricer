@@ -12,6 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from liabilities import survival_prob, project_cash_flows, flat_discount_factors, value_liabilities, liability_duration
 from rates import simulate_short_rate, zcb_price, zero_yield, revalue_zcb
+from credit import simulate_spread, corporate_bond_price, revalue_corporate, matching_adjustment
 
 # %%
 # Parameters - defaults and sources are in ASSUMPTIONS.md
@@ -33,6 +34,17 @@ r0 = 0.0375 # short rate today - roughly the Bank of England base rate
 a = 0.15 # speed the rate is pulled back to b - about 15% of the gap closes each year
 b = 0.05 # long-run level the short rate is pulled towards
 sigma_r = 0.01 # size of the random shocks - about 1 percentage point a year
+
+# Credit spreads - mean-reverting like Vasicek, one process per bucket
+s0_tech = 0.018 # tech/data-centre spread today - 180 bps
+theta_tech = 0.020 # long-run tech spread
+kappa_tech = 0.5 # speed tech spreads are pulled back - faster than rates, panics fade
+sigma_tech = 0.012 # size of tech spread shocks - much jumpier than other debt
+s0_other = 0.012 # other corporate spread today - 120 bps
+theta_other = 0.013 # long-run other spread
+kappa_other = 0.5 # speed other spreads are pulled back
+sigma_other = 0.0065 # size of other spread shocks
+ma_fraction = 0.5 # share of the bond spread allowed as matching adjustment
 
 # Simulation
 n_paths = 10_000 # number of simulated scenarios
@@ -170,3 +182,75 @@ print(f"{maturity}-year gilt: £{liab_0 / 1e6:,.0f}m today, after 1 year mean £
 assert np.corrcoef(r1, gilt_1)[0, 1] < -0.99 # gilt value moves opposite to rates
 assert np.isclose(revalue_zcb(100, 1, r0, r1, a, b, sigma_r), 100 / zcb_price(r0, 1, a, b, sigma_r)).all() # 1-year gilt just pays out
 print("All rate checks passed")
+
+# %%
+# Credit 1: simulated spreads after 1 year match the known mean and spread, tech moves more
+np.random.seed(seed)
+s1_tech = simulate_spread(s0_tech, kappa_tech, theta_tech, sigma_tech, T=1, N=12, n_paths=n_paths)[:, -1]
+s1_other = simulate_spread(s0_other, kappa_other, theta_other, sigma_other, T=1, N=12, n_paths=n_paths)[:, -1]
+
+for name, s1, s0_, k, th, sg in [("Tech", s1_tech, s0_tech, kappa_tech, theta_tech, sigma_tech),
+                                  ("Other", s1_other, s0_other, kappa_other, theta_other, sigma_other)]:
+    mean_exact = th + (s0_ - th) * np.exp(-k)
+    sd_exact = sg * np.sqrt((1 - np.exp(-2 * k)) / (2 * k))
+    print(f"{name} spread in 1 year - mean {s1.mean():.2%} (exact {mean_exact:.2%}), sd {s1.std():.2%} (exact {sd_exact:.2%}), "
+          f"1-in-200 wide {np.percentile(s1, 99.5):.2%}, floored at zero {np.mean(s1 == 0):.1%} of paths")
+    assert abs(s1.mean() - mean_exact) < 0.001
+
+assert np.percentile(s1_tech, 99.5) - s0_tech > np.percentile(s1_other, 99.5) - s0_other # tech widens more
+
+# %%
+# Credit 2: corporate yield = gilt yield + spread, so a corporate bond is cheaper than a gilt
+tau = 10
+gilt = zcb_price(r0, tau, a, b, sigma_r)
+corp = corporate_bond_price(r0, s0_other, tau, a, b, sigma_r)
+corp_yield = -np.log(corp) / tau
+print(f"10-year gilt yield {zero_yield(r0, tau, a, b, sigma_r):.2%}, corporate yield {corp_yield:.2%}")
+assert corp < gilt
+assert np.isclose(corp_yield - zero_yield(r0, tau, a, b, sigma_r), s0_other)
+
+# %%
+# Credit 3: spreads widen 100 bps instantly - price falls by about duration x 1%
+for tau in [5, 10, 15]:
+    value_wide = revalue_corporate(100, tau, r0, r0, s0_other, s0_other + 0.01, a, b, sigma_r, horizon=0)
+    print(f"{tau:>2}-year corporate bond: £100 -> £{value_wide:.1f} after +100 bps")
+    assert abs((100 - value_wide) - tau) < 0.1 * tau # roughly duration x 1%
+
+# %%
+# Credit 4: the matching adjustment cushions a spread widening
+# Insurer backs its liabilities with 60% gilts, 10% tech corporates, 30% other corporates, all 10-year
+bond_mix = np.array([0.6, 0.1, 0.3]) # gilts, tech, other
+bond_spreads_0 = np.array([0.0, s0_tech, s0_other])
+
+ma_0 = matching_adjustment(bond_mix, bond_spreads_0, ma_fraction)
+liab_ma_0 = value_liabilities(cash_flows, times, df_0, ma=ma_0)
+assets_0 = liab_ma_0 * bond_mix # £ in each bond bucket, total equal to the liabilities
+print(f"MA today: {ma_0 * 1e4:.0f} bps, liabilities £{liab_0 / 1e6:,.0f}m without MA -> £{liab_ma_0 / 1e6:,.0f}m with MA")
+
+widen = np.array([0.0, 0.03, 0.01]) # tech +300 bps, other +100 bps, gilts unaffected
+assets_wide = np.array([
+    revalue_corporate(assets_0[0], 10, r0, r0, 0.0, 0.0, a, b, sigma_r, horizon=0), # gilt = corporate bond with zero spread
+    revalue_corporate(assets_0[1], 10, r0, r0, s0_tech, s0_tech + widen[1], a, b, sigma_r, horizon=0),
+    revalue_corporate(assets_0[2], 10, r0, r0, s0_other, s0_other + widen[2], a, b, sigma_r, horizon=0),
+])
+ma_wide = matching_adjustment(assets_wide, bond_spreads_0 + widen, ma_fraction)
+liab_ma_wide = value_liabilities(cash_flows, times, df_0, ma=ma_wide)
+
+asset_loss = assets_0.sum() - assets_wide.sum()
+liab_fall = liab_ma_0 - liab_ma_wide
+print(f"Tech +300 bps, other +100 bps: bonds -£{asset_loss / 1e6:,.0f}m, MA rises to {ma_wide * 1e4:.0f} bps, "
+      f"liabilities -£{liab_fall / 1e6:,.0f}m, own funds -£{(asset_loss - liab_fall) / 1e6:,.0f}m (would be -£{asset_loss / 1e6:,.0f}m without MA)")
+assert ma_wide > ma_0 # wider spreads -> bigger MA
+assert 0 < liab_fall < asset_loss # the MA cushions part of the loss, not all of it
+
+# %%
+# Credit 5: corporate bonds bought today, revalued after one simulated year
+# rates and spreads independent for now - linked up in step 6
+tech_1 = revalue_corporate(100, 10, r0, r1, s0_tech, s1_tech, a, b, sigma_r)
+other_1 = revalue_corporate(100, 10, r0, r1, s0_other, s1_other, a, b, sigma_r)
+for name, v in [("Tech", tech_1), ("Other", other_1)]:
+    print(f"{name} 10-year corporate: £100 today, after 1 year mean £{v.mean():.1f}, 1-in-200 low £{np.percentile(v, 0.5):.1f}")
+assert np.percentile(tech_1, 0.5) < np.percentile(other_1, 0.5) # tech debt has the worse tail
+print("All credit checks passed")
+
+# %%

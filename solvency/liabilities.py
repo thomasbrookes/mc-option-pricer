@@ -81,12 +81,13 @@ def value_liabilities(cash_flows, times, discount_factors, ma=0.0):
         times: payment times in years
         discount_factors: value today of £1 paid at each time, shape (n_times,)
             or (n_paths, n_times) to value many simulated curves at once
-        ma: matching adjustment - extra discount rate added on top of the curve
-            (a fraction of the corporate bond spread, set in step 4)
+        ma: matching adjustment - extra discount rate added on top of the curve,
+            a number or one per path (from credit.matching_adjustment)
 
     Returns:
         value: £ value of the liabilities - a number, or one per path
     """
+    ma = np.asarray(ma, dtype=float)[..., None] # one row per path if ma varies by path
     ma_factors = np.exp(-ma * np.array(times, dtype=float)) # extra discounting from the matching adjustment
 
     return (discount_factors * ma_factors) @ cash_flows # discount each payment and add them up

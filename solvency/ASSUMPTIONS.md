@@ -89,3 +89,27 @@ Resulting yield curve today: 1-year 3.84%, 10-year 4.29%, 30-year 4.58%. On this
 - *What insurers actually use:* economic scenario generators with multi-factor models (e.g. multi-factor Hull-White, which is Vasicek adjusted to fit today's curve exactly).
 - *Q&A line:* "Vasicek captures the main risk, rates moving as a whole, with a standard-formula-sized shock. A production model would add more factors and fatter tails."
 - *Bank Rate vs gilt yields:* Bank Rate moves in 0.25-point steps, but we value with gilt yields, which move continuously because they price in expectations of all future rate decisions.
+
+### Credit spreads and corporate bonds
+
+A corporate bond yields the gilt rate plus a **credit spread**, the extra interest for lending to a company rather than the government. Each spread follows the same "pulled back to normal, plus random shocks" process as the Vasicek short rate. A corporate bond is valued as the gilt price × `exp(−spread × years to maturity)`.
+
+| Parameter | Default | What it means | Source / rationale |
+|---|---|---|---|
+| `s0_tech` | 1.80% (180 bps) | Tech/data-centre spread today | Judgement: above general corporate spreads, reflecting heavy borrowing to build data centres |
+| `theta_tech` | 2.00% | Long-run tech spread | Judgement |
+| `kappa_tech` | 0.5 | Speed tech spreads are pulled back to normal (about 40% of the gap closes each year) | Spread panics fade faster than rate cycles |
+| `sigma_tech` | 1.20% | Size of yearly tech spread shocks | Gives a 1-in-200 widening of about 270 bps, in the spirit of telecom debt in 2001–02 |
+| `s0_other` | 1.20% (120 bps) | Other corporate spread today | Approximately typical for UK investment-grade (A/BBB) corporate bonds; **check against a current index before presenting** |
+| `theta_other` | 1.30% | Long-run other spread | Judgement |
+| `kappa_other` | 0.5 | Speed other spreads are pulled back | As tech |
+| `sigma_other` | 0.65% | Size of yearly other spread shocks | Gives a 1-in-200 widening of about 135 bps, roughly the Solvency II standard formula's spread stress for 10-year A/BBB bonds |
+| `ma_fraction` | 50% | Share of the bond portfolio's average spread allowed as matching adjustment | Stands in for "spread minus fundamental spread": roughly half of investment-grade spread is commonly attributed to expected defaults and downgrades |
+
+**Matching adjustment as built:** MA = `ma_fraction` × the value-weighted average spread across all bonds (gilts count as zero spread; equities are not eligible). Example: 60% gilts, 10% tech and 30% other corporates gives an MA of 27 bps, cutting the liabilities from £965m to £943m.
+
+**Credit simplifications:**
+- **No defaults or downgrades.** Bonds lose value only when spreads widen. In reality downgrades also raise the fundamental spread, which shrinks the MA. Our MA never erodes, the same blind spot as the real rule in a bubble.
+- **One flat spread per bucket**, the same for every maturity. Real spread curves vary by maturity.
+- **Bell-curve shocks, floored at zero.** Real spreads jump up sharply in crises and rarely fall far, so their moves are lopsided. Ours are symmetric, and a small share of paths (about 1–3%) get floored at zero spread. That only affects the benign side, not the 1-in-200 tail we care about.
+- **MA weighting by value, not by duration.** A real MA is calculated from the matched asset cash flows.
