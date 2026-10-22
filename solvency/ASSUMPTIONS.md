@@ -208,3 +208,51 @@ Own funds (the cushion)                        £71m
 - **Same cushion for both insurers.** A real 1999 with-profits insurer often had extra buffers.
 - **The SCR covers market risk only:** no longevity, default, operational or counterparty risk.
 - **Bonds are not reinvested.** Each bucket is one bond held for the year, and the year-1 payment is simply deducted from assets.
+
+### The AI crash (deterministic stress)
+
+Applied instantly to today's balance sheet. No randomness: every shock hits at once. The SCR is held at its pre-crash value, so ratio after = own funds after ÷ SCR before.
+
+| Shock | Default | Rationale |
+|---|---|---|
+| `tech_shock` | −50% | Brief. Tech fell about 80% in the dot-com bust (Nasdaq, 2000–02), so −50% is a moderate AI crash |
+| `other_shock` | −20% | Brief |
+| `rate_shock` | −0.75 points (−75 bps) | Brief (range −50 to −100 bps); a parallel shift of the whole gilt curve as investors flee to safety |
+| `tech_spread_shock` | +3 points (+300 bps) | Judgement: the telecom-debt story; slightly beyond the model's own 1-in-200 tech widening (about +270 bps) |
+| `other_spread_shock` | +1 point (+100 bps) | Judgement: roughly the widening in broad investment-grade spreads during the dot-com bust (approximate, from memory) |
+| Reinsurer default | Not modelled | Left out to keep the focus on shares and credit |
+
+**Portfolios:** the modern insurer (A) and the 1999-style insurer as in the balance sheet section, plus **concentrated (B)**: the modern insurer with 50% of its corporate bonds in tech/data-centre debt instead of 10%. B represents an insurer that has leaned into AI lending: still all investment grade, but one sector.
+
+**Results:**
+
+| Insurer | Own funds | SCR | Ratio before | Own funds after | Ratio after |
+|---|---|---|---|---|---|
+| 1999-style (40% shares) | £71m | £162m | 44% | −£86m | **−53%** |
+| Modern, diversified credit (A) | £71m | £33m | 215% | £34m | **103%** |
+| Modern, concentrated credit (B) | £70m | £38m | 185% | £17m | **45%** |
+
+**Where the losses came from (£m, positive = lost):**
+
+| Insurer | Shares | Bonds | Liabilities | Total |
+|---|---|---|---|---|
+| 1999-style | 127 | −15 (gain) | 45 | 157 |
+| Modern A | 16 | −23 (gain) | 44 | 37 |
+| Modern B | 16 | 3 | 35 | 53 |
+
+The liabilities rise because rates fall 75 bps, partly offset by the MA rising from 27 to 48 bps. The bonds gain from lower rates but lose from wider spreads; for B the spread loss on tech debt wins.
+
+**Sensitivity (ratio after: 1999-style | A | B):**
+
+| Spread widening (tech / other) | Rates −50 bps | Rates −75 bps | Rates −100 bps |
+|---|---|---|---|
+| +200 / +50 bps | −46% / 135% / 83% | −50% / 138% / 85% | −55% / 140% / 87% |
+| +250 / +75 bps | −47% / 117% / 63% | −52% / 120% / 65% | −56% / 122% / 66% |
+| **+300 / +100 bps (default)** | −49% / 100% / 43% | **−53% / 103% / 45%** | −58% / 105% / 46% |
+| +400 / +150 bps | −51% / 67% / 6% | −56% / 69% / 7% | −60% / 71% / 8% |
+
+**What's robust:**
+- The 1999-style insurer fails under every setting.
+- Concentration costs the modern insurer 50–60 percentage points under every setting.
+- The rate shock barely matters, because the bonds are matched.
+- Whether the diversified modern insurer stays above 100% depends on how far credit spreads widen.

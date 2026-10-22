@@ -16,84 +16,7 @@ from credit import simulate_spread, corporate_bond_price, revalue_corporate, mat
 from equities import simulate_equity_growth, simulate_all_drivers, revalue_equities
 from correlation import check_corr_matrix, print_corr_matrix
 from balance_sheet import initial_balance_sheet, simulate_own_funds, scr_and_ratio
-
-# %%
-# Parameters - defaults and sources are in ASSUMPTIONS.md
-
-# Gompertz-Makeham mortality, death rate at age x = A + B * c**x
-A = 0.00022 # age-independent part - accidents, illness that hit any age equally
-B = 2.7e-6 # size of the age-related part
-c = 1.124 # how fast death rates grow with age - roughly 12% higher each year older
-max_age = 120 # nobody is assumed to live past this age
-
-# The annuity block
-n_annuitants = 10_000 # number of pensioners
-age_min = 60 # youngest pensioner
-age_max = 90 # oldest pensioner - spread evenly across ages age_min..age_max
-annual_payment = 10_000 # £ paid to each pensioner per year, at the end of each year they're alive
-
-# Vasicek interest rates, dr = a(b - r)dt + sigma dW
-r0 = 0.0375 # short rate today - roughly the Bank of England base rate
-a = 0.15 # speed the rate is pulled back to b - about 15% of the gap closes each year
-b = 0.05 # long-run level the short rate is pulled towards
-sigma_r = 0.01 # size of the random shocks - about 1 percentage point a year
-
-# Credit spreads - mean-reverting like Vasicek, one process per bucket
-s0_tech = 0.018 # tech/data-centre spread today - 180 bps
-theta_tech = 0.020 # long-run tech spread
-kappa_tech = 0.5 # speed tech spreads are pulled back - faster than rates, panics fade
-sigma_tech = 0.012 # size of tech spread shocks - much jumpier than other debt
-s0_other = 0.012 # other corporate spread today - 120 bps
-theta_other = 0.013 # long-run other spread
-kappa_other = 0.5 # speed other spreads are pulled back
-sigma_other = 0.0065 # size of other spread shocks
-ma_fraction = 0.5 # share of the bond spread allowed as matching adjustment
-
-# Equities - GBM via the existing engine, volatilities and correlation from Yahoo Finance 2016-2025
-mu_eq_tech = 0.085 # tech expected return - risk-free plus a 4.5% equity risk premium, not a historical average
-sigma_eq_tech = 0.24 # tech volatility - XLK (US tech sector) 2016-2025 was 24.3%
-mu_eq_other = 0.075 # non-tech expected return - risk-free plus 3.5% equity risk premium
-sigma_eq_other = 0.16 # non-tech volatility - SPXT (S&P 500 ex-tech) 2016-2025 was 16.3%
-rho_equity = 0.74 # correlation between tech and non-tech - XLK vs SPXT daily returns 2016-2025
-tech_weight = 0.38 # share of equities in tech - S&P 500 tech sector weight, end June 2026
-
-# Correlation between all five drivers - rows and columns in DRIVERS order:
-# tech equity, non-tech equity, short rate, tech spread, other spread
-# Positive equity-rate: shares down, rates down. Negative equity-spread: shares down, spreads wider
-corr_matrix = [
-    [ 1.00,  0.74,  0.50, -0.75, -0.60], # tech equity - 0.74 from Yahoo data, 0.5 and -0.75 from the standard formula
-    [ 0.74,  1.00,  0.50, -0.60, -0.75], # non-tech equity
-    [ 0.50,  0.50,  1.00, -0.50, -0.50], # short rate - rates fall when spreads widen, standard formula 0.5
-    [-0.75, -0.60, -0.50,  1.00,  0.80], # tech spread - each bucket's equity links most to its own spread
-    [-0.60, -0.75, -0.50,  0.80,  1.00], # other spread - spreads widen together
-]
-
-# Simulation
-n_paths = 10_000 # number of simulated scenarios
-seed = 42 # fixed so results are repeatable
-
-# Starting capital
-own_funds_ratio = 0.075 # cushion = 7.5% of liabilities - puts the modern insurer at a typical ~200% solvency ratio
-
-# Everything above in one dict, so the balance sheet functions can take it in one go
-p = dict(A=A, B=B, c=c, max_age=max_age, n_annuitants=n_annuitants, age_min=age_min, age_max=age_max,
-         annual_payment=annual_payment, r0=r0, a=a, b=b, sigma_r=sigma_r,
-         s0_tech=s0_tech, theta_tech=theta_tech, kappa_tech=kappa_tech, sigma_tech=sigma_tech,
-         s0_other=s0_other, theta_other=theta_other, kappa_other=kappa_other, sigma_other=sigma_other,
-         ma_fraction=ma_fraction, mu_eq_tech=mu_eq_tech, sigma_eq_tech=sigma_eq_tech, mu_eq_other=mu_eq_other,
-         sigma_eq_other=sigma_eq_other, tech_weight=tech_weight, corr_matrix=np.array(corr_matrix),
-         own_funds_ratio=own_funds_ratio)
-
-# The two insurers - same liabilities and same cushion, different investments
-modern = dict(
-    gilt_weight=0.55, # share of assets in gilts
-    corp_weight=0.40, # share in corporate bonds
-    equity_weight=0.05, # share in shares
-    gilt_maturity=9, # years - matched to the ~8.6-year liabilities
-    corp_maturity=9,
-    corp_tech_share=0.10, # share of corporate bonds lent to tech/data centres - roughly their index weight
-)
-style_1999 = dict(modern, gilt_weight=0.35, corp_weight=0.25, equity_weight=0.40) # same bonds, 40% in shares
+from scenarios import * # every parameter, the portfolios and the crash shocks - see scenarios.py
 
 # %%
 # Liabilities 1: life expectancy should look realistic
@@ -411,3 +334,26 @@ for s_ in [1, 7, 2026]:
     print(f"Seed {s_}: SCR £{scr_s / 1e6:,.1f}m, ratio {ratio_s:.0%}")
     assert abs(scr_s / results["Modern"][3] - 1) < 0.1
 print("All balance sheet checks passed")
+
+# %%
+# Crash 1: the AI crash, checked against hand calculations
+from scenarios import apply_crash, run_scenario
+bs0 = initial_balance_sheet(modern, p)
+after = apply_crash(bs0, modern, p, crash)
+
+share_loss = bs0["equities"] * (tech_weight * 0.50 + (1 - tech_weight) * 0.20) # 50% of the tech part, 20% of the rest
+assert np.isclose(bs0["equities"] - after["equities"], share_loss)
+assert after["gilts"] > bs0["gilts"] # lower rates lift gilts
+assert after["liabilities"] < bs0["liabilities"] * 1.1 # matched bonds and MA keep the rise in liabilities small
+print(f"Modern: shares -£{share_loss / 1e6:,.0f}m, gilts +£{(after['gilts'] - bs0['gilts']) / 1e6:,.0f}m, "
+      f"MA {bs0['ma'] * 1e4:.0f} -> {after['ma'] * 1e4:.0f} bps, own funds £{bs0['own_funds'] / 1e6:,.0f}m -> £{after['own_funds'] / 1e6:,.0f}m")
+
+# %%
+# Crash 2: the ordering makes sense - 1999-style loses most, concentrated credit loses more than diversified
+runs = {name: run_scenario(name, port, p, crash, n_paths, seed)
+        for name, port in [("1999", style_1999), ("A", modern), ("B", concentrated)]}
+loss = {k: r["own_funds_before"] - r["own_funds_after"] for k, r in runs.items()}
+print(f"Crash losses: 1999-style £{loss['1999'] / 1e6:,.0f}m, modern A £{loss['A'] / 1e6:,.0f}m, modern B £{loss['B'] / 1e6:,.0f}m")
+assert loss["1999"] > loss["B"] > loss["A"] > 0
+assert runs["B"]["ratio_after"] < runs["A"]["ratio_after"]
+print("All crash checks passed")
