@@ -15,6 +15,7 @@ from rates import simulate_short_rate, zcb_price, zero_yield, revalue_zcb
 from credit import simulate_spread, corporate_bond_price, revalue_corporate, matching_adjustment
 from equities import simulate_equity_growth, simulate_all_drivers, revalue_equities
 from correlation import check_corr_matrix, print_corr_matrix
+from balance_sheet import initial_balance_sheet, simulate_own_funds, scr_and_ratio
 
 # %%
 # Parameters - defaults and sources are in ASSUMPTIONS.md
@@ -70,6 +71,29 @@ corr_matrix = [
 # Simulation
 n_paths = 10_000 # number of simulated scenarios
 seed = 42 # fixed so results are repeatable
+
+# Starting capital
+own_funds_ratio = 0.075 # cushion = 7.5% of liabilities - puts the modern insurer at a typical ~200% solvency ratio
+
+# Everything above in one dict, so the balance sheet functions can take it in one go
+p = dict(A=A, B=B, c=c, max_age=max_age, n_annuitants=n_annuitants, age_min=age_min, age_max=age_max,
+         annual_payment=annual_payment, r0=r0, a=a, b=b, sigma_r=sigma_r,
+         s0_tech=s0_tech, theta_tech=theta_tech, kappa_tech=kappa_tech, sigma_tech=sigma_tech,
+         s0_other=s0_other, theta_other=theta_other, kappa_other=kappa_other, sigma_other=sigma_other,
+         ma_fraction=ma_fraction, mu_eq_tech=mu_eq_tech, sigma_eq_tech=sigma_eq_tech, mu_eq_other=mu_eq_other,
+         sigma_eq_other=sigma_eq_other, tech_weight=tech_weight, corr_matrix=np.array(corr_matrix),
+         own_funds_ratio=own_funds_ratio)
+
+# The two insurers - same liabilities and same cushion, different investments
+modern = dict(
+    gilt_weight=0.55, # share of assets in gilts
+    corp_weight=0.40, # share in corporate bonds
+    equity_weight=0.05, # share in shares
+    gilt_maturity=9, # years - matched to the ~8.6-year liabilities
+    corp_maturity=9,
+    corp_tech_share=0.10, # share of corporate bonds lent to tech/data centres - roughly their index weight
+)
+style_1999 = dict(modern, gilt_weight=0.35, corp_weight=0.25, equity_weight=0.40) # same bonds, 40% in shares
 
 # %%
 # Liabilities 1: life expectancy should look realistic
@@ -338,3 +362,52 @@ print(f"Worst 1% of tech years: tech shares {np.expm1(outcomes[worst, 0].mean())
 assert outcomes[worst, 2].mean() < 0 # rates fall in an equity crash
 assert outcomes[worst, 3].mean() > 0 and outcomes[worst, 4].mean() > 0 # spreads widen in an equity crash
 print("All correlation checks passed")
+
+# %%
+# Balance sheet 1: today's balance sheet adds up
+bs_modern = initial_balance_sheet(modern, p)
+for item in ["gilts", "corp_tech", "corp_other", "equities", "invested", "liabilities", "own_funds"]:
+    print(f"{item:>12}: £{bs_modern[item] / 1e6:,.0f}m")
+assert np.isclose(bs_modern["gilts"] + bs_modern["corp_tech"] + bs_modern["corp_other"] + bs_modern["equities"], bs_modern["invested"])
+assert np.isclose(bs_modern["own_funds"], own_funds_ratio * bs_modern["liabilities"])
+
+# %%
+# Balance sheet 2: SCR and solvency ratio for both insurers
+results = {}
+for name, portfolio in [("Modern", modern), ("1999-style", style_1999)]:
+    bs0 = initial_balance_sheet(portfolio, p)
+    of1, detail = simulate_own_funds(bs0, portfolio, p, n_paths, seed)
+    scr, ratio = scr_and_ratio(bs0["own_funds"], of1)
+    results[name] = (bs0, of1, detail, scr, ratio)
+    print(f"{name}: own funds £{bs0['own_funds'] / 1e6:,.0f}m, SCR £{scr / 1e6:,.0f}m, solvency ratio {ratio:.0%}")
+
+assert results["1999-style"][3] > results["Modern"][3] # equity-heavy needs more capital - brief validation check
+assert 1.5 < results["Modern"][4] < 3.0 # modern insurer starts at a realistic ratio
+
+# %%
+# Balance sheet 3: what goes wrong in the modern insurer's worst years?
+bs0, of1, detail, scr, ratio = results["Modern"]
+worst = of1 <= np.percentile(of1, 1) # worst 1% of simulated years
+print(f"Modern insurer, worst 1% of years: rate {(detail['r1'][worst].mean() - r0) * 1e4:+.0f} bps, "
+      f"tech spread {(detail['s1_tech'][worst].mean() - s0_tech) * 1e4:+.0f} bps, other spread {(detail['s1_other'][worst].mean() - s0_other) * 1e4:+.0f} bps, "
+      f"shares {detail['equities'][worst].mean() / bs0['equities'] - 1:+.0%}")
+
+# %%
+# Balance sheet 4: with every volatility set to zero, nothing random happens, so the SCR should be close to zero
+# Not exactly zero - shares and corporate bonds are expected to earn a bit more than gilts, and rates and spreads drift
+p_calm = dict(p, sigma_r=0.0, sigma_tech=0.0, sigma_other=0.0, sigma_eq_tech=0.0, sigma_eq_other=0.0)
+bs_calm = initial_balance_sheet(modern, p_calm)
+of1_calm, _ = simulate_own_funds(bs_calm, modern, p_calm, n_paths, seed)
+scr_calm, _ = scr_and_ratio(bs_calm["own_funds"], of1_calm)
+print(f"No randomness: SCR £{scr_calm / 1e6:,.1f}m (vs £{results['Modern'][3] / 1e6:,.0f}m normally), every path the same: {np.ptp(of1_calm) < 1}")
+assert np.ptp(of1_calm) < 1 # all paths identical
+assert abs(scr_calm) < 0.2 * results["Modern"][3] # small next to the real SCR
+
+# %%
+# Balance sheet 5: results are stable - a different random seed barely moves the SCR
+for s_ in [1, 7, 2026]:
+    of1_s, _ = simulate_own_funds(bs_modern, modern, p, n_paths, s_)
+    scr_s, ratio_s = scr_and_ratio(bs_modern["own_funds"], of1_s)
+    print(f"Seed {s_}: SCR £{scr_s / 1e6:,.1f}m, ratio {ratio_s:.0%}")
+    assert abs(scr_s / results["Modern"][3] - 1) < 0.1
+print("All balance sheet checks passed")

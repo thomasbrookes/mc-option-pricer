@@ -4,7 +4,7 @@ Plain-English cheat sheet for presentation Q&A and interviews. Every parameter, 
 
 ## What the model is
 
-A simplified UK annuity writer. It has promised fixed yearly payments to pensioners for life (the **liabilities**). It holds gilts, corporate bonds, equities and a reinsurance asset to pay for them (the **assets**). The difference between the two is **own funds**, the insurer's safety cushion.
+A simplified UK annuity writer. It has promised fixed yearly payments to pensioners for life (the **liabilities**). It holds gilts, corporate bonds and equities to pay for them (the **assets**). The difference between the two is **own funds**, the insurer's safety cushion.
 
 - **SCR** (Solvency Capital Requirement): how much own funds would shrink in a 1-in-200 bad year. Found by simulating 10,000 possible years and taking the 0.5th-worst-percentile outcome.
 - **Solvency ratio** = own funds ÷ SCR. Above 100% means the insurer survives a 1-in-200 year.
@@ -25,7 +25,7 @@ A simplified UK annuity writer. It has promised fixed yearly payments to pension
 | No defaults or downgrades | Corporate bonds only lose value through spread widening | Out of scope for now; extension point left in credit.py |
 | Same rate parameters for simulating and pricing | Vasicek is simulated with real-world parameters and the same parameters are used in the bond price formula (zero market price of rate risk) | Avoids a second set of parameters that would be hard to justify |
 | Credit spreads floored at zero | A mean-reverting process could go negative; we stop it at 0 | Negative spreads make no economic sense |
-| Reinsurance as a quota share | The reinsurance asset = a fixed fraction of the liability value | Simple; it is only written down in the AI crash stress (reinsurer default) |
+| No reinsurance or counterparty risk | The insurer keeps all its liabilities; no reinsurer can default on it | Keeps the model focused on shares and credit. Adding a reinsurer default would make the AI crash worse: an easy improvement to mention |
 | No randomness check | With every volatility set to zero, the SCR should come out close to zero | Not exactly zero, because equities and corporate bonds are expected to earn slightly more than gilts |
 | Discounting back | Own funds at t=1 are brought back to today using today's one-year gilt price | Simple and consistent |
 | AI crash is instantaneous | Shocks are applied to today's balance sheet all at once | Standard way to present a stress test |
@@ -163,3 +163,48 @@ All five risk drivers move together through one correlation matrix, applied with
 - **One fixed matrix.** Real correlations rise in a crisis. Crisis correlations are out of scope; the deterministic AI crash stress hits everything at once instead.
 - **Standard formula correlations are between capital charges, not between the risk drivers themselves.** Using them as driver correlations is a common simplification.
 - **Bell-curve dependence** (a Gaussian copula). Real markets show stronger links in the extreme tail than this allows.
+
+### Balance sheet, SCR and solvency ratio
+
+**Today:**
+```
+Assets (gilts + corporate bonds + shares)   £1,014m
+Liabilities (pension promises, with MA)    −  £943m
+Own funds (the cushion)                        £71m
+```
+
+**After each of the 10,000 simulated years:**
+1. Every asset is revalued on that year's rates, spreads and share prices.
+2. The year-1 pension payment is paid out of assets.
+3. The remaining promises are revalued on that year's curve, with that year's MA.
+4. Own funds = assets − liabilities, discounted back to today with the 1-year gilt price.
+
+**SCR** = own funds today − the 1-in-200 worst own funds after a year. **Solvency ratio** = own funds ÷ SCR.
+
+| Parameter | Default | What it means | Source / rationale |
+|---|---|---|---|
+| `own_funds_ratio` | 7.5% | Starting cushion as a share of the liabilities (£71m) | Chosen so the modern insurer starts at about 200%, typical for UK annuity writers. Our SCR only covers market risk, so less cushion is needed than in reality to reach that ratio |
+| Modern portfolio | 55% gilts, 40% corporate bonds, 5% shares | A typical modern UK annuity writer | Brief: ~5% equities, rest mainly bonds |
+| 1999-style portfolio | 35% gilts, 25% corporate bonds, 40% shares | Pre-dot-com style, heavy in shares | Brief: ~40% equities |
+| `gilt_maturity`, `corp_maturity` | 9 years | Every bond matures in 9 years | Matched to the liabilities' 8.6-year duration. A scan of 7–11 years confirmed this is close to where interest-rate risk is smallest |
+| `corp_tech_share` | 10% | Share of corporate bonds lent to tech/data centres | Roughly tech's weight in a broad corporate bond index (approximate) |
+
+**Results:**
+
+| Insurer | Own funds | SCR | Solvency ratio |
+|---|---|---|---|
+| Modern | £71m | £33m | 215% |
+| 1999-style | £71m | £162m | 44% |
+
+**Same cushion for both: why that's fair.** Before Solvency II, capital rules for life insurers were based mainly on the size of the liabilities (roughly 4% of reserves under Solvency I, from memory; **check before quoting**), not on investment risk. So a 1999 insurer could hold 40% in shares without a bigger cushion. Measured by today's 1-in-200 test, it covers only 44% of its requirement. That is exactly why the rules changed.
+
+**What drives the modern insurer's SCR:** in its worst 1% of years, credit spreads widen sharply (tech +164 bps, other +108 bps) and shares fall 23%. Interest rates barely matter, because the bonds are matched. Its main risk is credit, not shares or rates: it has swapped share risk for credit risk (slide 15).
+
+**Checks:**
+- With every volatility set to zero, the SCR is −£4m: a small gain, because shares and corporate bonds are expected to earn slightly more than gilts.
+- The SCR moves by less than 1% across random seeds.
+
+**Simplifications:**
+- **Same cushion for both insurers.** A real 1999 with-profits insurer often had extra buffers.
+- **The SCR covers market risk only:** no longevity, default, operational or counterparty risk.
+- **Bonds are not reinvested.** Each bucket is one bond held for the year, and the year-1 payment is simply deducted from assets.
